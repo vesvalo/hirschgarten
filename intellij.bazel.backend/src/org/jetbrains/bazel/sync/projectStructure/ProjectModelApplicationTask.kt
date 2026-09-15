@@ -21,9 +21,9 @@ import org.jetbrains.bazel.sync.scope.PartialProjectSync
 import org.jetbrains.bazel.sync.scope.ProjectSyncScope
 import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource
 import org.jetbrains.bazel.workspacemodel.entities.BazelModuleEntitySource
-import org.jetbrains.bazel.workspacemodel.entities.BazelModuleExtensionEntity
 import org.jetbrains.bazel.workspacemodel.entities.BazelProjectEntitySource
 import org.jetbrains.bazel.workspacemodel.entities.bazelModuleExtension
+import org.jetbrains.bazel.workspacemodel.entities.targetKey
 import org.jetbrains.bsp.protocol.TaskId
 
 internal class ProjectModelApplicationTask(
@@ -34,6 +34,11 @@ internal class ProjectModelApplicationTask(
 ) {
   companion object {
     private const val MAX_REPLACE_WSM_ATTEMPTS = 3
+
+    private fun isModuleForSyncedTarget(module: ModuleEntity, syncedLabels: Set<Label>): Boolean {
+      val extension = module.bazelModuleExtension ?: return false
+      return extension.targetKey.label in syncedLabels
+    }
   }
 
   suspend fun apply(storage: MutableEntityStorage) {
@@ -78,7 +83,7 @@ internal class ProjectModelApplicationTask(
     fun MutableEntityStorage.removeEntitiesFromSyncedTargets() {
       val modulesToRemove = entities(ModuleEntity::class.java).filter { entity ->
         entity.entitySource is BazelModuleEntitySource ||
-          (entity.entitySource is BazelProjectEntitySource && entity.bazelModuleExtension?.targetKey?.label in syncedLabels)
+          (entity.entitySource is BazelProjectEntitySource && isModuleForSyncedTarget(entity, syncedLabels))
       }
       val sourcesToRemove = entities(SourceRootEntity::class.java).filter { it.entitySource is BazelModuleEntitySource }
       modulesToRemove.forEach { removeEntity(it) }
