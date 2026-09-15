@@ -105,6 +105,7 @@ class ProjectDirtyStateService(private val project: Project, coroutineScope: Cor
   private fun notifyPlatform() {
     if (project.isDisposed) return
     val projectTracker = ExternalSystemProjectTracker.getInstance(project)
+    logger.info("notifyPlatform: marking project dirty and scheduling change processing")
     projectTracker.markDirty(BazelWorkspace.getInstance(project).projectId)
     projectTracker.scheduleChangeProcessing()
   }

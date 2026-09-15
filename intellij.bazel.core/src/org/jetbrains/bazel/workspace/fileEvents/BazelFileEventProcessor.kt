@@ -269,9 +269,15 @@ open class DefaultBazelFileEventProcessor(private val project: Project): BazelFi
       }
     }
 
-    val result = doProcessSourceFileEvents(planarizedEvents.filter { it.affectsSourceFile(project) }, context)
+    val sourceFileEvents = planarizedEvents.filter { it.affectsSourceFile(project) }
+    val result = doProcessSourceFileEvents(sourceFileEvents, context)
     doProcessBazelFileEvents(planarizedEvents.filter { it.affectsBazelConfigFile() })
     doProcessDirectoryEvents(events.filterIsInstance<CreateDirectory>(), context)
+
+    // Mark source file changes as dirty for partial sync
+    if (sourceFileEvents.isNotEmpty()) {
+      markSourceFileChangesDirty(sourceFileEvents)
+    }
 
     // Finalize and apply changes
     context.progressReporter.finalisingStep {
@@ -389,12 +395,47 @@ open class DefaultBazelFileEventProcessor(private val project: Project): BazelFi
     if (events.isEmpty()) return
 
     val paths = events.flatMap { it.affectedPaths() }.distinct()
-    if (paths.any { it.fileName.toString() !in Constants.BUILD_FILE_NAMES }) {
-      ProjectDirtyStateService.getInstance(project).markWholeProjectDirty("Config file change")
-      return
-    }
+    logger.info("doProcessBazelFileEvents: ${events.size} events, paths: ${paths.joinToString { it.fileName.toString() }}")
 
-    ProjectDirtyStateService.getInstance(project).markDirty(paths.map { it.parent })
+    val workspaceLevelFiles = setOf(
+      *Constants.WORKSPACE_FILE_NAMES,
+      Constants.DEFAULT_PROJECT_VIEW_FILE_NAME,
+    )
+    val buildLevelFiles = setOf(
+      *Constants.BUILD_FILE_NAMES,
+      "bzl",  // .bzl files
+    )
+
+    val hasWorkspaceChange = paths.any { it.fileName.toString() in workspaceLevelFiles }
+    val hasBuildLevelChange = paths.any { it.fileName.toString() in buildLevelFiles }
+
+    when {
+      hasWorkspaceChange -> {
+        logger.info("Marking whole project dirty (workspace-level config change)")
+        ProjectDirtyStateService.getInstance(project).markWholeProjectDirty("Workspace config file change")
+      }
+      hasBuildLevelChange -> {
+        val buildFilePaths = paths.filter { it.fileName.toString() in Constants.BUILD_FILE_NAMES }
+        logger.info("Marking ${buildFilePaths.size} BUILD file paths dirty")
+        ProjectDirtyStateService.getInstance(project).markDirty(buildFilePaths.map { it.parent })
+      }
+      else -> {
+        logger.info("Marking whole project dirty (other config file change)")
+        ProjectDirtyStateService.getInstance(project).markWholeProjectDirty("Config file change")
+      }
+    }
+  }
+
+  /**
+   * Marks source file changes as dirty to trigger partial sync.
+   * Source files need to resolve which BUILD file owns them via inverse sources query.
+   */
+  private fun markSourceFileChangesDirty(events: List<SimplifiedFileEvent>) {
+    val paths = events.mapNotNull { it.fileAdded ?: it.fileRemoved }.map { it.parent }.distinct()
+    if (paths.isNotEmpty()) {
+      logger.info("markSourceFileChangesDirty: marking ${paths.size} source file parent directories dirty")
+      ProjectDirtyStateService.getInstance(project).markDirty(paths)
+    }
   }
 
   private suspend fun doProcessDirectoryEvents(events: List<CreateDirectory>, context: ProcessingContext) {

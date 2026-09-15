@@ -17,10 +17,12 @@ import com.intellij.openapi.vcs.BranchChangeListener
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.tree.TreeVisitor
 import com.intellij.util.ui.tree.TreeUtil
+import com.intellij.openapi.diagnostic.Logger
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.bazel.config.BazelPluginConstants
 import org.jetbrains.bazel.config.rootDir
 import org.jetbrains.bazel.coroutines.BazelCoroutineService
+import org.jetbrains.bazel.sync.ProjectDirtyStateService
 import org.jetbrains.bazel.sync.ProjectSyncScope
 import org.jetbrains.bazel.sync.ProjectSyncService
 import org.jetbrains.bazel.sync.status.SyncStatusListener
@@ -31,6 +33,7 @@ class BazelWorkspace(val project: Project) :
   ExternalSystemProjectAware,
   Disposable {
   private var initialized = false
+  private val logger = Logger.getInstance(javaClass)
 
   @Volatile
   private var disposed = false
@@ -57,9 +60,22 @@ class BazelWorkspace(val project: Project) :
   }
 
   override fun reloadProject(context: ExternalSystemProjectReloadContext) {
-    if (context.isExplicitReload) {
+    logger.info("reloadProject called: isExplicitReload=${context.isExplicitReload}")
+    val dirtyState = ProjectDirtyStateService.getInstance(project).current()
+    logger.info("reloadProject: dirtyState=$dirtyState")
+    if (dirtyState.wholeProject || dirtyState.isEmpty) {
+      logger.info("reloadProject: triggering full sync")
       BazelCoroutineService.getInstance(project).start {
         project.service<ProjectSyncService>().sync(ProjectSyncScope.Full(build = false, phased = false))
+      }
+    }
+    else {
+      val dirtyPaths = dirtyState.paths.toList()
+      if (dirtyPaths.isNotEmpty()) {
+        logger.info("reloadProject: triggering files sync for ${dirtyPaths.size} paths")
+        BazelCoroutineService.getInstance(project).start {
+          project.service<ProjectSyncService>().sync(ProjectSyncScope.Files(files = dirtyPaths, build = false))
+        }
       }
     }
   }
