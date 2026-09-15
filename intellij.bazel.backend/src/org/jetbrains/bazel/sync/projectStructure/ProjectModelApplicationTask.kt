@@ -4,7 +4,6 @@ import com.intellij.platform.workspace.jps.entities.ModuleEntity
 import com.intellij.platform.workspace.jps.entities.SourceRootEntity
 import com.intellij.platform.workspace.storage.EntitySource
 import com.intellij.platform.workspace.storage.MutableEntityStorage
-import com.intellij.platform.workspace.storage.WorkspaceEntity
 import com.intellij.openapi.components.serviceAsync
 import com.intellij.openapi.project.Project
 import com.intellij.platform.backend.workspace.WorkspaceModel
@@ -20,11 +19,11 @@ import org.jetbrains.bazel.sync.scope.FilesProjectSync
 import org.jetbrains.bazel.sync.scope.FullProjectSync
 import org.jetbrains.bazel.sync.scope.PartialProjectSync
 import org.jetbrains.bazel.sync.scope.ProjectSyncScope
-import org.jetbrains.bazel.workspacemodel.entities.BazelDummyEntitySource
 import org.jetbrains.bazel.workspacemodel.entities.BazelEntitySource
 import org.jetbrains.bazel.workspacemodel.entities.BazelModuleEntitySource
 import org.jetbrains.bazel.workspacemodel.entities.BazelModuleExtensionEntity
 import org.jetbrains.bazel.workspacemodel.entities.BazelProjectEntitySource
+import org.jetbrains.bazel.workspacemodel.entities.bazelModuleExtension
 import org.jetbrains.bsp.protocol.TaskId
 
 internal class ProjectModelApplicationTask(
@@ -77,15 +76,13 @@ internal class ProjectModelApplicationTask(
     val syncedLabels = targetsToSync.toSet()
 
     fun MutableEntityStorage.removeEntitiesFromSyncedTargets() {
-      val modulesToRemove = entities(ModuleEntity::class.java).filter { it.entitySource is BazelModuleEntitySource }
+      val modulesToRemove = entities(ModuleEntity::class.java).filter { entity ->
+        entity.entitySource is BazelModuleEntitySource ||
+          (entity.entitySource is BazelProjectEntitySource && entity.bazelModuleExtension?.targetKey?.label in syncedLabels)
+      }
       val sourcesToRemove = entities(SourceRootEntity::class.java).filter { it.entitySource is BazelModuleEntitySource }
       modulesToRemove.forEach { removeEntity(it) }
       sourcesToRemove.forEach { removeEntity(it) }
-    }
-
-    fun ModuleEntity.matchesSyncedTarget(): Boolean {
-      val extension = bazelModuleExtension ?: return false
-      return extension.targetKey.label in syncedLabels
     }
 
     project.syncConsole.withSubtask(
@@ -106,10 +103,6 @@ internal class ProjectModelApplicationTask(
               sourceFilter = { entitySource: EntitySource -> entitySource is BazelProjectEntitySource },
               replaceWith = storage,
             )
-          }
-          bspTracer.spanBuilder("add.partial.sync.entities.in.apply.on.workspace.model.ms").use {
-            val modulesToAdd = storage.entities(ModuleEntity::class.java).filter { it.matchesSyncedTarget() }
-            modulesToAdd.forEach { builder.addEntity(it) }
           }
         }
       }
