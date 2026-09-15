@@ -11,6 +11,7 @@ import org.jetbrains.bazel.label.Label
 import org.jetbrains.bazel.label.label
 import org.jetbrains.bazel.progress.syncConsole
 import org.jetbrains.bazel.server.BazelServerService
+import org.jetbrains.bazel.sync.scope.FilesProjectSync
 import org.jetbrains.bazel.sync.scope.FirstPhaseSync
 import org.jetbrains.bazel.sync.scope.PartialProjectSync
 import org.jetbrains.bazel.sync.scope.ProjectSyncScope
@@ -50,15 +51,14 @@ object BazelWorkspaceResolver {
           )
         }
 
-        SecondPhaseSync, is PartialProjectSync -> {
+        SecondPhaseSync, is PartialProjectSync, is FilesProjectSync -> {
           reportIgnoredBazelBsp(project, taskId, server.bazelInfo.workspaceRoot)
 
           val selector =
-            if (scope is PartialProjectSync) {
-              WorkspaceBuildTargetSelector.SpecificTargets(scope.userRequestedTargets)
-            }
-            else {
-              WorkspaceBuildTargetSelector.AllTargets
+            when (scope) {
+              is PartialProjectSync -> WorkspaceBuildTargetSelector.SpecificTargets(scope.userRequestedTargets)
+              is FilesProjectSync -> WorkspaceBuildTargetSelector.SpecificTargets(scope.resolvedTargets)
+              else -> WorkspaceBuildTargetSelector.AllTargets
             }
 
           val syncProject = server.workspaceBuildTargets(WorkspaceBuildTargetParams(selector, build, allKnownTargets, taskId))

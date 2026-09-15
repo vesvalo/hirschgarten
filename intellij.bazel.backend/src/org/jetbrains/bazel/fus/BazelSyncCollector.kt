@@ -6,6 +6,7 @@ import com.intellij.internal.statistic.eventLog.events.EventFields
 import com.intellij.internal.statistic.service.fus.collectors.CounterUsagesCollector
 import com.intellij.openapi.project.Project
 import org.jetbrains.bazel.commons.LanguageClass
+import org.jetbrains.bazel.sync.scope.FilesProjectSync
 import org.jetbrains.bazel.sync.scope.FirstPhaseSync
 import org.jetbrains.bazel.sync.scope.PartialProjectSync
 import org.jetbrains.bazel.sync.scope.ProjectSyncScope
@@ -128,6 +129,7 @@ private fun ProjectSyncScope.fusPhase(): BazelSyncCollector.SyncPhase =
     FirstPhaseSync -> BazelSyncCollector.SyncPhase.FIRST_PHASE
     SecondPhaseSync -> BazelSyncCollector.SyncPhase.SECOND_PHASE
     is PartialProjectSync -> BazelSyncCollector.SyncPhase.PARTIAL
+    is FilesProjectSync -> BazelSyncCollector.SyncPhase.PARTIAL
   }
 
 private fun ProjectSyncStatistics.languageTargetCountsForReporting(): Map<LanguageClass, Int> =

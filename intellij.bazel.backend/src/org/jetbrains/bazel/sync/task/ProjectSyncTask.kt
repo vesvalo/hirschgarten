@@ -26,7 +26,6 @@ import org.jetbrains.bazel.action.saveAllFiles
 import org.jetbrains.bazel.commons.constants.Constants
 import org.jetbrains.bazel.config.BazelBackendBundle
 import org.jetbrains.bazel.config.rootDir
-import org.jetbrains.bazel.commons.constants.Constants
 import org.jetbrains.bazel.coroutines.BazelCoroutineService
 import org.jetbrains.bazel.fus.BazelSyncCollector
 import org.jetbrains.bazel.label.Label
