@@ -26,6 +26,7 @@ import org.jetbrains.bazel.action.saveAllFiles
 import org.jetbrains.bazel.commons.constants.Constants
 import org.jetbrains.bazel.config.BazelBackendBundle
 import org.jetbrains.bazel.config.rootDir
+import org.jetbrains.bazel.commons.constants.Constants
 import org.jetbrains.bazel.coroutines.BazelCoroutineService
 import org.jetbrains.bazel.fus.BazelSyncCollector
 import org.jetbrains.bazel.label.Label
@@ -44,6 +45,7 @@ import org.jetbrains.bazel.sync.projectPostSyncHooks
 import org.jetbrains.bazel.sync.projectPreSyncHooks
 import org.jetbrains.bazel.sync.projectStructure.ProjectModelApplicationTask
 import org.jetbrains.bazel.sync.projectSyncHooks
+import org.jetbrains.bazel.sync.scope.FilesProjectSync
 import org.jetbrains.bazel.sync.scope.FirstPhaseSync
 import org.jetbrains.bazel.sync.scope.PartialProjectSync
 import org.jetbrains.bazel.sync.scope.ProjectSyncScope
@@ -58,6 +60,8 @@ import org.jetbrains.bazel.taskEvents.BazelTaskEventsService
 import org.jetbrains.bsp.protocol.TaskGroupId
 import org.jetbrains.bsp.protocol.TaskId
 import org.jetbrains.bsp.protocol.id
+import org.jetbrains.bsp.protocol.InverseSourcesParams
+import java.nio.file.Path
 import java.util.concurrent.CancellationException
 import kotlin.random.Random
 
@@ -97,7 +101,11 @@ class ProjectSyncTask(
   }
 
   suspend fun partialSync(targets: List<Label>, buildProject: Boolean) {
-    sync(PartialProjectSync(targetsToSync = targets), buildProject = buildProject)
+    sync(PartialProjectSync(userRequestedTargets = targets), buildProject = buildProject)
+  }
+
+  suspend fun filesSync(files: List<Path>, buildProject: Boolean) {
+    sync(FilesProjectSync(files = files, build = buildProject), buildProject = buildProject)
   }
 
   private suspend fun sync(syncScope: ProjectSyncScope, buildProject: Boolean): ProjectSyncResult {
@@ -309,6 +317,44 @@ class ProjectSyncTask(
       }
 
       return BazelServerService.getInstance(project).connection.runWithServer(taskId) { server ->
+        var resolvedScope = syncScope
+        if (syncScope is FilesProjectSync) {
+          val hasConfigFileChanges = syncScope.files.any { path ->
+            val fileName = path.fileName?.toString()
+            fileName in Constants.WORKSPACE_FILE_NAMES ||
+              fileName in Constants.BUILD_FILE_NAMES ||
+              fileName == Constants.MODULE_BAZEL_FILE_NAME ||
+              fileName == Constants.MODULE_BAZEL_LOCK_FILE_NAME ||
+              fileName == Constants.PROJECT_VIEW_FILE_EXTENSION ||
+              fileName == Constants.DEFAULT_PROJECT_VIEW_FILE_NAME ||
+              fileName == Constants.LEGACY_DEFAULT_PROJECT_VIEW_FILE_NAME
+          }
+
+          if (hasConfigFileChanges) {
+            project.syncConsole.addDiagnosticMessage(
+              taskId = taskId,
+              message = BazelBackendBundle.message("console.task.sync.config.file.changes.detected"),
+              severity = MessageEvent.Kind.WARNING,
+            )
+            resolvedScope = SecondPhaseSync
+          }
+          else {
+            val inverseSourcesResult = server.buildTargetInverseSources(
+              InverseSourcesParams(taskId, syncScope.files)
+            )
+            val affectedTargets = inverseSourcesResult.targets.values.flatten().distinct()
+            if (affectedTargets.isEmpty()) {
+              project.syncConsole.addDiagnosticMessage(
+                taskId = taskId,
+                message = BazelBackendBundle.message("console.task.sync.no.targets.for.files"),
+                severity = MessageEvent.Kind.WARNING,
+              )
+              return@runWithServer ProjectSyncResult(ProjectSyncCompletionResult.SUCCESS)
+            }
+            resolvedScope = PartialProjectSync(userRequestedTargets = affectedTargets)
+          }
+        }
+
         server.withOutFileHardLinksSync(projectModelUpdated = { shouldUpdateProjectModel }) {
           server.bazelInfo.release.deprecated()?.let { deprecated ->
             project.syncConsole.addDiagnosticMessage(
@@ -331,7 +377,7 @@ class ProjectSyncTask(
           val syncResult = phaseDurations.trackSyncPhase(ProjectSyncPhase.COLLECT_PROJECT_DETAILS) {
             executeSyncHooks(
               progressReporter = progressReporter,
-              syncScope = syncScope,
+              syncScope = resolvedScope,
               buildProject = buildProject,
               storage = storage,
               taskId = taskId,
@@ -351,7 +397,7 @@ class ProjectSyncTask(
             phaseDurations.trackSyncPhase(ProjectSyncPhase.APPLY_PROJECT_MODEL) {
               updateProjectModel(
                 progressReporter = progressReporter,
-                syncScope = syncScope,
+                syncScope = resolvedScope,
                 storage = storage,
                 taskId = taskId,
                 deferredApplyActions = deferredApplyActions,
@@ -442,6 +488,9 @@ class ProjectSyncTask(
         return@use ProjectSyncResult(ProjectSyncCompletionResult.FAILURE, statistics = statistics)
       if (syncScope == FirstPhaseSync) {
         allKnownTargets = resolvedWorkspace.targets.map { it.id }
+      }
+      if (syncScope is PartialProjectSync) {
+        syncScope.resolvedTargets = resolvedWorkspace.targets.map { it.id }
       }
 
       project.syncConsole.withSubtask(

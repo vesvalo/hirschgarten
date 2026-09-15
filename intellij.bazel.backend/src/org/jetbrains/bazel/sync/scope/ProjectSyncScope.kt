@@ -2,6 +2,7 @@ package org.jetbrains.bazel.sync.scope
 
 import org.jetbrains.annotations.ApiStatus
 import org.jetbrains.bazel.label.Label
+import java.nio.file.Path
 
 /**
  * Scope of the sync. Multiple versions of sync are supported, including
@@ -33,6 +34,30 @@ data object SecondPhaseSync : FullProjectSync
 /**
  * Represents a partial project sync, which operates only on a limited subset of targets,
  * and only things related to these targets should be refreshed
+ *
+ * @property userRequestedTargets The targets explicitly requested by the user to sync
+ * @property resolvedTargets The targets that were actually resolved (userRequestedTargets + transitive deps), populated after resolution
  */
 @ApiStatus.Internal
-data class PartialProjectSync(val targetsToSync: List<Label>) : ProjectSyncScope
+data class PartialProjectSync(
+  val userRequestedTargets: List<Label>,
+) : ProjectSyncScope {
+  var resolvedTargets: List<Label> = userRequestedTargets
+    internal set
+}
+
+/**
+ * Represents a sync based on modified files.
+ * The sync resolves which targets own those files and syncs them along with their dependencies.
+ *
+ * @property files The modified files to resolve targets for
+ * @property build Whether to build the targets during sync
+ */
+@ApiStatus.Internal
+data class FilesProjectSync(
+  val files: List<Path>,
+  val build: Boolean,
+) : ProjectSyncScope {
+  var resolvedTargets: List<Label> = emptyList()
+    internal set
+}

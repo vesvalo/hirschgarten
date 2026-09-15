@@ -23,9 +23,9 @@ internal class DefaultProjectSyncService(private val project: Project) : Project
           syncTask.fullSync(buildProject = scope.build)
         }
 
-      is ProjectSyncScope.Targets -> throw UnsupportedOperationException("not supported yet")
+      is ProjectSyncScope.Targets -> syncTask.partialSync(targets = scope.patterns, buildProject = scope.build)
 
-      is ProjectSyncScope.Files -> throw UnsupportedOperationException("not supported yet")
+      is ProjectSyncScope.Files -> syncTask.filesSync(files = scope.files, buildProject = scope.build)
     }
     ProjectDirtyStateService.getInstance(project).finishSync(scope)
   }

@@ -55,7 +55,7 @@ object BazelWorkspaceResolver {
 
           val selector =
             if (scope is PartialProjectSync) {
-              WorkspaceBuildTargetSelector.SpecificTargets(scope.targetsToSync)
+              WorkspaceBuildTargetSelector.SpecificTargets(scope.userRequestedTargets)
             }
             else {
               WorkspaceBuildTargetSelector.AllTargets
